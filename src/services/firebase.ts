@@ -8,8 +8,6 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import type { Transaction, DebtRecord, User, RecycleBinItem } from '../types';
-import { getAllStoredLocalUsers } from './auth';
-
 // Web app Firebase configuration provided by USER
 
 const firebaseConfig = {
@@ -36,7 +34,6 @@ export const isSuperAdminEmail = (email?: string): boolean => {
 };
 
 // Listen to all registered users & auto-discover existing users from transactions/debts
-
 export const subscribeToAllUsers = (
   onUpdate: (users: User[]) => void,
   onError?: (err: Error) => void
@@ -55,14 +52,21 @@ export const subscribeToAllUsers = (
 
   // Add local stored users
   try {
-    const localUsers = getAllStoredLocalUsers();
-    localUsers.forEach((u) => {
-      if (u.uid) usersMap.set(u.uid, { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
-      if (u.email) usersMap.set(u.email.toLowerCase(), { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
-    });
+    const savedLocal = localStorage.getItem('ledger_pulse_registered_users_v1');
+    if (savedLocal) {
+      const parsedLocal = JSON.parse(savedLocal);
+      Object.values(parsedLocal).forEach((item: any) => {
+        const u = item?.user;
+        if (u) {
+          if (u.uid) usersMap.set(u.uid, { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
+          if (u.email) usersMap.set(u.email.toLowerCase(), { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
+        }
+      });
+    }
   } catch {
     // Ignore local storage error
   }
+
 
   const emitMergedUsers = () => {
     const uniqueUsers = Array.from(new Set(Array.from(usersMap.values()).map((u) => u.uid)))

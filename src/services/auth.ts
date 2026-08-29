@@ -62,10 +62,7 @@ const saveLocalUsers = (users: Record<string, { user: User; passwordHash: string
   }
 };
 
-export const getAllStoredLocalUsers = (): User[] => {
-  const map = getLocalUsers();
-  return Object.values(map).map((item) => item.user);
-};
+
 
 
 // 1. Get initial persistent user session
