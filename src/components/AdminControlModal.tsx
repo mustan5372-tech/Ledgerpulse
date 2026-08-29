@@ -3,7 +3,6 @@ import type { User, Transaction, DebtRecord } from '../types';
 import { updateUserProfileInCloud } from '../services/firebase';
 import { 
   ShieldCheck, 
-  Users, 
   X, 
   Search, 
   CheckCircle,
@@ -13,6 +12,7 @@ import {
   Edit3,
   Check
 } from 'lucide-react';
+
 
 interface AdminControlModalProps {
   isOpen: boolean;
@@ -93,11 +93,11 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
           </button>
         </div>
 
-        {/* Global Mode Switcher Notice */}
+        {/* Super Admin Notice */}
         <div className="auth-alert alert-success mb-3">
           <ShieldCheck className="alert-icon" />
           <div>
-            <strong>Super Admin Privilege Active:</strong> As <code>mustan5372@gmail.com</code>, you can view, edit names/emails, and manage all users' records across the Ledger platform.
+            <strong>Super Admin Control Active:</strong> Select any specific user below to inspect, add, or modify their financial records and update their profile details.
           </div>
         </div>
 
@@ -108,32 +108,6 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
           </div>
         )}
 
-        {/* View Mode Pills */}
-        <div className="form-group mb-3">
-          <label className="form-label">
-            <Users className="form-icon" /> Select User View Mode
-          </label>
-          <div className="auth-tabs-wrapper">
-            <button
-              className={`auth-tab-btn ${selectedUserFilter === null ? 'active' : ''}`}
-              onClick={() => {
-                onSelectUserFilter(null);
-              }}
-            >
-              🌐 Global View (All Users Data)
-            </button>
-            <button
-              className={`auth-tab-btn ${selectedUserFilter !== null ? 'active' : ''}`}
-              onClick={() => {
-                if (users.length > 0) {
-                  onSelectUserFilter(users[0].uid);
-                }
-              }}
-            >
-              👤 Filter by Specific User
-            </button>
-          </div>
-        </div>
 
         {/* Search Users Input */}
         <div className="search-input-wrapper mb-3">
@@ -250,16 +224,17 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
                     <td>
                       <button
                         className={`btn-settle-toggle ${isSelected ? 'settled-active' : 'pending-active'}`}
-                        onClick={() => onSelectUserFilter(isSelected ? null : u.uid)}
+                        onClick={() => onSelectUserFilter(u.uid)}
                       >
                         {isSelected ? (
                           <>
-                            <CheckCircle style={{ width: 14, height: 14 }} /> Active View
+                            <CheckCircle style={{ width: 14, height: 14 }} /> Selected
                           </>
                         ) : (
                           'Inspect & Edit Data'
                         )}
                       </button>
+
                     </td>
                   </tr>
                 );
