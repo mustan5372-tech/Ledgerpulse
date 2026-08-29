@@ -8,8 +8,10 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import type { Transaction, DebtRecord, User, RecycleBinItem } from '../types';
+import { getAllStoredLocalUsers } from './auth';
 
 // Web app Firebase configuration provided by USER
+
 const firebaseConfig = {
   apiKey: "AIzaSyABAsxoHQgP5Kugn2zDnecoLQFLLISo8q0",
   authDomain: "ledgerplus-7defb.firebaseapp.com",
@@ -33,49 +35,143 @@ export const isSuperAdminEmail = (email?: string): boolean => {
   return email.trim().toLowerCase() === 'mustan5372@gmail.com';
 };
 
-// Listen to all registered users (for Super Admin panel)
+// Listen to all registered users & auto-discover existing users from transactions/debts
+
 export const subscribeToAllUsers = (
   onUpdate: (users: User[]) => void,
   onError?: (err: Error) => void
 ) => {
+  const usersMap = new Map<string, User>();
+
+  // Add preset user first
+  const mustanUser: User = {
+    uid: 'mustan5372_uid',
+    email: 'mustan5372@gmail.com',
+    name: 'Mustan Sanawadwala',
+    isSuperAdmin: true,
+  };
+  usersMap.set('mustan5372_uid', mustanUser);
+  usersMap.set('mustan5372@gmail.com', mustanUser);
+
+  // Add local stored users
   try {
-    const unsubscribe = onSnapshot(
+    const localUsers = getAllStoredLocalUsers();
+    localUsers.forEach((u) => {
+      if (u.uid) usersMap.set(u.uid, { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
+      if (u.email) usersMap.set(u.email.toLowerCase(), { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
+    });
+  } catch {
+    // Ignore local storage error
+  }
+
+  const emitMergedUsers = () => {
+    const uniqueUsers = Array.from(new Set(Array.from(usersMap.values()).map((u) => u.uid)))
+      .map((uid) => {
+        const match = Array.from(usersMap.values()).find((u) => u.uid === uid);
+        return match!;
+      })
+      .filter(Boolean);
+
+    // Sort: Super Admin top, then alphabetical
+    uniqueUsers.sort((a, b) => {
+      if (a.isSuperAdmin) return -1;
+      if (b.isSuperAdmin) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    onUpdate(uniqueUsers);
+  };
+
+  try {
+    // 1. Listen to users collection
+    const unsubUsers = onSnapshot(
       collection(db, USERS_COLLECTION),
       (snapshot) => {
-        const userList: User[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          userList.push({
-            uid: data.uid || docSnap.id,
-            email: data.email || '',
-            name: data.name || data.email?.split('@')[0] || 'User',
-            isSuperAdmin: isSuperAdminEmail(data.email),
-          });
+          const uid = data.uid || docSnap.id;
+          const email = data.email || '';
+          const name = data.name || (email ? email.split('@')[0] : 'User');
+          const userObj: User = {
+            uid,
+            email,
+            name,
+            isSuperAdmin: isSuperAdminEmail(email),
+          };
+          usersMap.set(uid, userObj);
+          if (email) usersMap.set(email.toLowerCase(), userObj);
         });
-
-        // Ensure mustan is included even if doc not created yet
-        if (!userList.some((u) => u.email.toLowerCase() === 'mustan5372@gmail.com')) {
-          userList.unshift({
-            uid: 'mustan5372_uid',
-            email: 'mustan5372@gmail.com',
-            name: 'Mustan Sanawadwala',
-            isSuperAdmin: true,
-          });
-        }
-
-        onUpdate(userList);
+        emitMergedUsers();
       },
       (err) => {
         console.warn('Firestore users subscription error:', err);
         if (onError) onError(err);
       }
     );
-    return unsubscribe;
+
+    // 2. Discover users from transactions collection
+    const unsubTxs = onSnapshot(
+      collection(db, COLLECTION_NAME),
+      (snapshot) => {
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const docUserId = data.userId || data.user_id;
+          if (docUserId && !usersMap.has(docUserId)) {
+            const email = data.userEmail || data.email || `${docUserId}@user.ledger`;
+            const name = data.userName || data.name || (data.email ? data.email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
+            const discoveredUser: User = {
+              uid: docUserId,
+              email,
+              name,
+              isSuperAdmin: isSuperAdminEmail(email),
+            };
+            usersMap.set(docUserId, discoveredUser);
+            // Persist discovered user doc in users collection
+            setDoc(doc(db, USERS_COLLECTION, docUserId), discoveredUser, { merge: true }).catch(() => {});
+          }
+        });
+        emitMergedUsers();
+      },
+      () => {}
+    );
+
+    // 3. Discover users from debts collection
+    const unsubDebts = onSnapshot(
+      collection(db, DEBTS_COLLECTION),
+      (snapshot) => {
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const docUserId = data.userId || data.user_id;
+          if (docUserId && !usersMap.has(docUserId)) {
+            const email = data.userEmail || data.email || `${docUserId}@user.ledger`;
+            const name = data.userName || data.name || (data.email ? data.email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
+            const discoveredUser: User = {
+              uid: docUserId,
+              email,
+              name,
+              isSuperAdmin: isSuperAdminEmail(email),
+            };
+            usersMap.set(docUserId, discoveredUser);
+            // Persist discovered user doc in users collection
+            setDoc(doc(db, USERS_COLLECTION, docUserId), discoveredUser, { merge: true }).catch(() => {});
+          }
+        });
+        emitMergedUsers();
+      },
+      () => {}
+    );
+
+    return () => {
+      unsubUsers();
+      unsubTxs();
+      unsubDebts();
+    };
   } catch (err) {
     console.error('Error starting users subscription:', err);
     return () => {};
   }
 };
+
 
 // Real-time Firestore sync listener for User Transactions
 export const subscribeToTransactions = (
