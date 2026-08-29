@@ -33,6 +33,25 @@ export const isSuperAdminEmail = (email?: string): boolean => {
   return email.trim().toLowerCase() === 'mustan5372@gmail.com';
 };
 
+// Update user profile in Cloud Firestore (for Super Admin or profile editing)
+export const updateUserProfileInCloud = async (uid: string, name: string, email: string): Promise<boolean> => {
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, uid);
+    const updated = {
+      uid,
+      name: name.trim(),
+      email: email.trim(),
+      isSuperAdmin: isSuperAdminEmail(email),
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(userDocRef, updated, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Error updating user profile in cloud:', err);
+    return false;
+  }
+};
+
 // Listen to all registered users & auto-discover existing users from transactions/debts
 export const subscribeToAllUsers = (
   onUpdate: (users: User[]) => void,
@@ -57,9 +76,13 @@ export const subscribeToAllUsers = (
       const parsedLocal = JSON.parse(savedLocal);
       Object.values(parsedLocal).forEach((item: any) => {
         const u = item?.user;
-        if (u) {
-          if (u.uid) usersMap.set(u.uid, { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
-          if (u.email) usersMap.set(u.email.toLowerCase(), { ...u, isSuperAdmin: isSuperAdminEmail(u.email) });
+        if (u && u.uid) {
+          usersMap.set(u.uid, {
+            uid: u.uid,
+            email: u.email || '',
+            name: u.name || (u.email ? u.email.split('@')[0] : 'User'),
+            isSuperAdmin: isSuperAdminEmail(u.email),
+          });
         }
       });
     }
@@ -67,16 +90,13 @@ export const subscribeToAllUsers = (
     // Ignore local storage error
   }
 
-
   const emitMergedUsers = () => {
-    const uniqueUsers = Array.from(new Set(Array.from(usersMap.values()).map((u) => u.uid)))
-      .map((uid) => {
-        const match = Array.from(usersMap.values()).find((u) => u.uid === uid);
-        return match!;
-      })
+    const uniqueUids = Array.from(new Set(Array.from(usersMap.values()).map((u) => u.uid)));
+    const uniqueUsers = uniqueUids
+      .map((uid) => usersMap.get(uid)!)
       .filter(Boolean);
 
-    // Sort: Super Admin top, then alphabetical
+    // Sort: Super Admin top, then alphabetical by name
     uniqueUsers.sort((a, b) => {
       if (a.isSuperAdmin) return -1;
       if (b.isSuperAdmin) return 1;
@@ -95,13 +115,23 @@ export const subscribeToAllUsers = (
           const data = docSnap.data();
           const uid = data.uid || docSnap.id;
           const email = data.email || '';
-          const name = data.name || (email ? email.split('@')[0] : 'User');
+          let name = data.name;
+          if (!name || name.startsWith('User (user_')) {
+            if (email && !email.includes('@user.ledger')) {
+              name = email.split('@')[0];
+            } else {
+              name = `User (${uid.substring(0, 8)})`;
+            }
+          }
+
           const userObj: User = {
             uid,
             email,
             name,
             isSuperAdmin: isSuperAdminEmail(email),
           };
+
+          // Update usersMap
           usersMap.set(uid, userObj);
           if (email) usersMap.set(email.toLowerCase(), userObj);
         });
@@ -120,18 +150,21 @@ export const subscribeToAllUsers = (
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
           const docUserId = data.userId || data.user_id;
-          if (docUserId && !usersMap.has(docUserId)) {
-            const email = data.userEmail || data.email || `${docUserId}@user.ledger`;
-            const name = data.userName || data.name || (data.email ? data.email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
-            const discoveredUser: User = {
-              uid: docUserId,
-              email,
-              name,
-              isSuperAdmin: isSuperAdminEmail(email),
-            };
-            usersMap.set(docUserId, discoveredUser);
-            // Persist discovered user doc in users collection
-            setDoc(doc(db, USERS_COLLECTION, docUserId), discoveredUser, { merge: true }).catch(() => {});
+          if (docUserId) {
+            const existing = usersMap.get(docUserId);
+            // Only set fallback if user is completely missing or has generic raw id
+            if (!existing || existing.name.startsWith('User (user_')) {
+              const email = data.userEmail || data.email || (existing?.email && !existing.email.endsWith('@user.ledger') ? existing.email : `${docUserId}@user.ledger`);
+              const name = data.userName || data.name || (email && !email.endsWith('@user.ledger') ? email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
+
+              const discoveredUser: User = {
+                uid: docUserId,
+                email,
+                name,
+                isSuperAdmin: isSuperAdminEmail(email),
+              };
+              usersMap.set(docUserId, discoveredUser);
+            }
           }
         });
         emitMergedUsers();
@@ -146,18 +179,20 @@ export const subscribeToAllUsers = (
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
           const docUserId = data.userId || data.user_id;
-          if (docUserId && !usersMap.has(docUserId)) {
-            const email = data.userEmail || data.email || `${docUserId}@user.ledger`;
-            const name = data.userName || data.name || (data.email ? data.email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
-            const discoveredUser: User = {
-              uid: docUserId,
-              email,
-              name,
-              isSuperAdmin: isSuperAdminEmail(email),
-            };
-            usersMap.set(docUserId, discoveredUser);
-            // Persist discovered user doc in users collection
-            setDoc(doc(db, USERS_COLLECTION, docUserId), discoveredUser, { merge: true }).catch(() => {});
+          if (docUserId) {
+            const existing = usersMap.get(docUserId);
+            if (!existing || existing.name.startsWith('User (user_')) {
+              const email = data.userEmail || data.email || (existing?.email && !existing.email.endsWith('@user.ledger') ? existing.email : `${docUserId}@user.ledger`);
+              const name = data.userName || data.name || (email && !email.endsWith('@user.ledger') ? email.split('@')[0] : `User (${docUserId.substring(0, 8)})`);
+
+              const discoveredUser: User = {
+                uid: docUserId,
+                email,
+                name,
+                isSuperAdmin: isSuperAdminEmail(email),
+              };
+              usersMap.set(docUserId, discoveredUser);
+            }
           }
         });
         emitMergedUsers();
@@ -175,6 +210,7 @@ export const subscribeToAllUsers = (
     return () => {};
   }
 };
+
 
 
 // Real-time Firestore sync listener for User Transactions

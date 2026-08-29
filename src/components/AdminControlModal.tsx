@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { User, Transaction, DebtRecord } from '../types';
+import { updateUserProfileInCloud } from '../services/firebase';
 import { 
   ShieldCheck, 
   Users, 
@@ -8,7 +9,9 @@ import {
   CheckCircle,
   TrendingUp,
   CreditCard,
-  Crown
+  Crown,
+  Edit3,
+  Check
 } from 'lucide-react';
 
 interface AdminControlModalProps {
@@ -35,6 +38,10 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
   currencySymbol = '₹',
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [editingUid, setEditingUid] = useState<string | null>(null);
+  const [editName, setEditName] = useState<string>('');
+  const [editEmail, setEditEmail] = useState<string>('');
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   if (!isOpen || !currentUser?.isSuperAdmin) return null;
 
@@ -44,9 +51,27 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
     return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
   });
 
+  const handleStartEdit = (user: User) => {
+    setEditingUid(user.uid);
+    setEditName(user.name.startsWith('User (user_') ? '' : user.name);
+    setEditEmail(user.email.endsWith('@user.ledger') ? '' : user.email);
+  };
+
+  const handleSaveProfile = async (uid: string) => {
+    const finalName = editName.trim() || `User (${uid.substring(0, 8)})`;
+    const finalEmail = editEmail.trim() || `${uid}@user.ledger`;
+
+    const success = await updateUserProfileInCloud(uid, finalName, finalEmail);
+    if (success) {
+      setSaveSuccessMsg(`Updated profile for "${finalName}"`);
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+      setEditingUid(null);
+    }
+  };
+
   return (
     <div className="modal-backdrop">
-      <div className="modal-content modal-card" style={{ maxWidth: '750px' }}>
+      <div className="modal-content modal-card" style={{ maxWidth: '820px' }}>
         {/* Header */}
         <div className="modal-header">
           <div className="brand-section">
@@ -60,7 +85,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
                   <ShieldCheck style={{ width: 12, height: 12 }} /> Super Admin
                 </span>
               </div>
-              <p className="brand-subtitle">Manage users & inspect global user financial records</p>
+              <p className="brand-subtitle">Manage users, update names/emails & inspect global financial records</p>
             </div>
           </div>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close">
@@ -72,9 +97,16 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
         <div className="auth-alert alert-success mb-3">
           <ShieldCheck className="alert-icon" />
           <div>
-            <strong>Super Admin Privilege Active:</strong> As <code>mustan5372@gmail.com</code>, you have full access to view, edit, modify, and manage all users' records across the Ledger platform.
+            <strong>Super Admin Privilege Active:</strong> As <code>mustan5372@gmail.com</code>, you can view, edit names/emails, and manage all users' records across the Ledger platform.
           </div>
         </div>
+
+        {saveSuccessMsg && (
+          <div className="auth-alert alert-success mb-3" style={{ padding: '0.5rem 0.8rem', fontSize: '0.85rem' }}>
+            <CheckCircle className="alert-icon" />
+            <span>{saveSuccessMsg}</span>
+          </div>
+        )}
 
         {/* View Mode Pills */}
         <div className="form-group mb-3">
@@ -116,11 +148,11 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
         </div>
 
         {/* User Accounts List */}
-        <div className="table-responsive" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+        <div className="table-responsive" style={{ maxHeight: '340px', overflowY: 'auto' }}>
           <table className="transactions-table">
             <thead>
               <tr>
-                <th>User Profile</th>
+                <th>User Profile & Name</th>
                 <th>Transactions</th>
                 <th>Debts</th>
                 <th>Total Volume</th>
@@ -130,6 +162,7 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
             <tbody>
               {filteredUsers.map((u) => {
                 const isSelected = selectedUserFilter === u.uid;
+                const isEditing = editingUid === u.uid;
                 const userTxs = allTransactions.filter((t) => t.userId === u.uid);
                 const userDebts = allDebts.filter((d) => d.userId === u.uid);
                 const totalVol = userTxs.reduce((sum, t) => sum + t.amount, 0);
@@ -138,19 +171,66 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
                   <tr key={u.uid} className={`tx-row ${isSelected ? 'active-legend' : ''}`}>
                     <td>
                       <div className="tx-title-cell">
-                        <div className="user-avatar-circle" style={{ width: 34, height: 34, fontSize: '0.85rem' }}>
-                          {u.name.charAt(0).toUpperCase()}
+                        <div className="user-avatar-circle" style={{ width: 36, height: 36, fontSize: '0.85rem', flexShrink: 0 }}>
+                          {u.name ? u.name.charAt(0).toUpperCase() : 'U'}
                         </div>
-                        <div>
-                          <div className="tx-title-text flex items-center gap-1">
-                            {u.name}
-                            {u.isSuperAdmin && (
-                              <span className="pill-badge pill-purple" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
-                                Super Admin
-                              </span>
-                            )}
-                          </div>
-                          <div className="tx-notes-text">{u.email}</div>
+                        <div style={{ width: '100%' }}>
+                          {isEditing ? (
+                            <div className="flex flex-col gap-1" style={{ width: '100%', maxWidth: '240px' }}>
+                              <input
+                                type="text"
+                                className="form-input"
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem' }}
+                                placeholder="Enter Real Name..."
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                              />
+                              <input
+                                type="email"
+                                className="form-input"
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                                placeholder="Enter Email..."
+                                value={editEmail}
+                                onChange={(e) => setEditEmail(e.target.value)}
+                              />
+                              <div className="flex gap-1 mt-1">
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                  onClick={() => handleSaveProfile(u.uid)}
+                                >
+                                  <Check style={{ width: 12, height: 12 }} /> Save Name
+                                </button>
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                  onClick={() => setEditingUid(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="tx-title-text flex items-center gap-1">
+                                <span>{u.name}</span>
+                                {u.isSuperAdmin && (
+                                  <span className="pill-badge pill-purple" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
+                                    Super Admin
+                                  </span>
+                                )}
+                                <button
+                                  className="btn btn-secondary icon-only"
+                                  style={{ padding: '0.15rem 0.35rem', marginLeft: '0.25rem', height: 'auto' }}
+                                  onClick={() => handleStartEdit(u)}
+                                  title="Edit User Name & Email"
+                                >
+                                  <Edit3 style={{ width: 12, height: 12, color: '#a78bfa' }} />
+                                </button>
+                              </div>
+                              <div className="tx-notes-text">{u.email}</div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -198,3 +278,4 @@ export const AdminControlModal: React.FC<AdminControlModalProps> = ({
     </div>
   );
 };
+
